@@ -42,14 +42,67 @@ func (col *AggregateFunction) Name() string {
 func (col *AggregateFunction) parse(t Type, tz *time.Location) (_ Interface, err error) {
 	col.chType = t
 
-	// throw away arguments
-	base := strings.TrimSpace(strings.SplitN(t.params(), ",", 3)[1])
-	if col.base, err = Type(base).Column(col.name, tz); err == nil {
+	params := t.params()
+	_, baseType := ExtractAggregateFunctionParams(params)
+	if col.base, err = Type(baseType).Column(col.name, tz); err == nil {
 		return col, nil
 	}
 	return nil, &UnsupportedColumnTypeError{
 		t: t,
 	}
+}
+
+// ExtractAggregateFunctionParams extracts the function name and the base type from AggregateFunction parameters
+// handling nested structures like Tuple(String, String) correctly
+func ExtractAggregateFunctionParams(params string) (funcName, baseType string) {
+	depth := 0
+	commaPos := -1
+	for i, char := range params {
+		switch char {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				commaPos = i
+				break
+			}
+		}
+		if commaPos != -1 {
+			break
+		}
+	}
+
+	if commaPos == -1 {
+		// No comma found, invalid format
+		return "", ""
+	}
+	funcName = strings.TrimSpace(params[:commaPos])
+	startPos := commaPos + 1
+	endPos := len(params)
+	depth = 0
+	for i := startPos; i < len(params); i++ {
+		char := params[i]
+		switch char {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 && i > startPos {
+				// This is a top-level comma, which means we've found the end of our base type
+				endPos = i
+				break
+			}
+		}
+		if endPos != len(params) {
+			break
+		}
+	}
+
+	baseType = strings.TrimSpace(params[startPos:endPos])
+	return
 }
 
 func (col *AggregateFunction) Type() Type {
